@@ -49,22 +49,31 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& cloud_msg)
   pcl_conversions::toPCL(*cloud_msg, *cloud);
 
   // Perform the actual filtering
+  // use voxel Grid to downsampling the point cloud
+  
   //pcl::VoxelGrid<pcl::PCLPointCloud2> sor;
   //sor.setInputCloud (cloudPtr);
   //sor.setLeafSize (0.03, 0.03, 0.015);
   //sor.filter (cloud_filtered);
 
+  // PointCloud<PointXYZ> is easier for getting the x,y,z coordinate
+  // so convert again from PCLPointCloud2 to PointCloud<PointXYZ>
   pcl::PointCloud<pcl::PointXYZ>::Ptr pt_cloud(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::fromPCLPointCloud2(*cloud, *pt_cloud);
 
+  // number of pixels in pointcloud 
   int number = pt_cloud->width * pt_cloud->height;
   
+  // the direct pixel corresponding to the color image detection result
+  // pixel_index is updated in the callback
+  // i is used as a back up if search is not successful
   int i = pixel_index[0] + 640*pixel_index[1] ;
   
   ROS_INFO("direct value! %d ", i); 
 
-	// search for the correct corresponding pixel !
 
+  // search for the correct corresponding pixel !
+  // based on disparity formula
   double temp1;
   int temp_index;
   double tempz;
@@ -83,6 +92,7 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& cloud_msg)
 
 	  	if ( temp1 - pixel_index[0] < 3 && temp1 - pixel_index[0] > -3 )
 	  	{
+	  		// find some pixel close to the disparity-compensated position
 	  		ROS_INFO("Eureka!!! tt %d tempindex %d", tt, temp_index);
 	  		i = temp_index; 
 	  	}
@@ -91,6 +101,7 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& cloud_msg)
   	}
   }
   
+  // find the not "nan" x,y,z coordinate
   int count_loop = 0;
   if(i != 0 && i != -1)
   	{ 
@@ -109,7 +120,8 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& cloud_msg)
   		}
   	}
  
-  
+  // here by following operation, the coordinate will be the same as the first time they were find
+  // which is not very clever thing to do. Can be changed to real-time feedback as long as stability is guarranted.
   if (published == false) {
   if ( (isnan(pt_cloud->points[i].x) || isnan(pt_cloud->points[i].y) || isnan(pt_cloud->points[i].z)) )
   { // ROS_INFO("waiting or done!"); 
@@ -175,6 +187,9 @@ main (int argc, char** argv)
 
 
 
+// following is the whole program for testing the plane segmentation
+// result is not good but it is at least doing subsampling and plane RANSAC correctly
+// for future use, please look at the PCL documentation
 
 /*
 ros::Publisher pub;
