@@ -30,7 +30,7 @@ class detect:
 
     #self.temp = cv2.imread('/home/ras26/catkin_ws/src/read_image/scripts/QR.PNG')
 
-  def blob(self,data):
+  def initialise(self,data):
     
 #    self.countdown = self.countdown-1;
     # print(self.countdown)
@@ -69,29 +69,131 @@ class detect:
 
     # hsv values for each colour we want to detect, hsv changes with different camera
     
-    lower_red = np.array([0,0,80])
-    upper_red = np.array([10,255,255])
-    lower_blue = np.array([80,150,0])
-    upper_blue = np.array([115,255,255])
-    lower_yellow = np.array([17, 200, 100])
-    upper_yellow = np.array([28, 255, 255]) 
-    lower_orange = np.array([8, 180, 100]) 
-    upper_orange = np.array([12, 255, 255])
-    lower_green = np.array([38, 100, 100]) 
-    upper_green = np.array([65, 255, 255])
-    lower_purple = np.array([150, 0, 0]) 
-    upper_purple = np.array([170, 255, 255])
+    redBounds = ([0,0,80], [10,255,255])
+    blueBounds = ([80,150,0], [115,255,255])
+    yellowBounds = ([17, 200, 100], [28, 255, 255])
+    orangeBounds = ([8, 180, 100], [12, 255, 255])
+    greenBounds = ([38, 100, 100],  [65, 255, 255])
+    purpleBounds = ([150, 0, 0], [170, 255, 255])
     	
 
     # make hsv masks of video stream with upper and lower limits
 
-    mask1 = cv2.inRange(hsv, lower_red, upper_red)
-    mask2 = cv2.inRange(hsv, lower_blue, upper_blue)
-    mask3 = cv2.inRange(hsv, lower_yellow, upper_yellow)
-    mask4 = cv2.inRange(hsv, lower_orange, upper_orange)
-    mask5 = cv2.inRange(hsv, lower_green, upper_green)
-    mask6 = cv2.inRange(hsv, lower_purple, upper_purple)
-    mask = mask1 + mask2 + mask3 + mask4 + mask5 + mask6
+    for (lower, upper) in redBounds:
+    	lower = np.array(lower, dtype = "uint8")
+        upper = np.array(upper, dtype = "uint8")
+    	mask1 = cv2.inRange(hsv, lower, upper)
+   	return mask1
+
+    for (lower, upper) in blueBounds:
+    	lower = np.array(lower, dtype = "uint8")
+        upper = np.array(upper, dtype = "uint8")
+        mask2 = cv2.inRange(hsv, lower, upper)
+    return mask2
+
+    for (lower, upper) in yellowBounds:
+    	lower = np.array(lower, dtype = "uint8")
+        upper = np.array(upper, dtype = "uint8")
+        mask3 = cv2.inRange(hsv, lower, upper)
+    return mask3
+
+    for (lower, upper) in orangeBounds:
+    	lower = np.array(lower, dtype = "uint8")
+        upper = np.array(upper, dtype = "uint8")
+        mask4 = cv2.inRange(hsv, lower, upper)
+    return mask4
+
+    for (lower, upper) in greenBounds:
+    	lower = np.array(lower, dtype = "uint8")
+        upper = np.array(upper, dtype = "uint8")
+        mask5 = cv2.inRange(hsv, lower, upper)
+    return mask5
+
+    for (lower, upper) in purpleBounds:
+    	lower = np.array(lower, dtype = "uint8")
+        upper = np.array(upper, dtype = "uint8")
+        mask6 = cv2.inRange(hsv, lower, upper)
+    return mask6
+            
+    mask = mask1 + mask2 + mask3 + mask4 + mask5 +mask6
+
+
+    output = cv2.bitwise_and(hsv, hsv, mask = mask)
+    # convert to BGR
+    output = cv2.cvtColor(output, cv2.COLOR_HSV2BGR)
+    # convert to grey 
+    grey = cv2.cvtColor(output, cv2.COLOR_BGR2GRAY)
+    
+    # uses binary and Otsu's thresholding
+    ret, thresholdedIm = cv2.threshold(grey,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)	
+    
+    # using closing (dilation followed by erosion) to fill gaps
+    kernel = np.ones((10,10),np.uint8)
+    #closing = cv2.dilate(thresholdedIm, kernel, iterations = 1)
+    closing = cv2.morphologyEx(thresholdedIm, cv2.MORPH_OPEN, kernel)
+    
+    output = cv2.bitwise_not(closing)
+    
+    cv2.imshow('output', output)
+    cv2.waitKey(1)
+    
+    ret2, thresholdedIm2 = cv2.threshold(output,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)  
+    
+    # find contours
+    contours, hierarchy = cv2.findContours(thresholdedIm2,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+    
+    # draw contours onto vid stream
+    for c in contours:
+        cv2.drawContours(output, [c], -1, (0,255,0), 3)
+
+    if len(keypoints) > 0:
+        index.data = [int(keypoints[0].pt[0]), int(keypoints[0].pt[1])]
+        colour = "I see an object"
+
+    keypoints = detector.detect(output)
+    
+    index = Int32MultiArray();
+    index.data = [-1, -1]
+
+    im_with_keypoints = cv2.drawKeypoints(output, keypoints, np.array([]), (0, 0, 255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+
+    cv2.imshow("detection", im_with_keypoints)
+    cv2.waitKey(3)
+    
+    if len(keypoints) > 0:
+        index.data = [int(keypoints[0].pt[0]), int(keypoints[0].pt[1])]
+        
+    	if np.any(lower == [0, 0, 80]):          
+        	colour = "I see a red object"
+        	mask = mask1
+    	return mask, colour
+
+    	if np.any(lower == [80, 150, 0]):          
+        	colour = "I see a blue object"
+        	mask += mask2
+    	return mask, colour
+
+    	if np.any(lower == [17, 200, 100]):          
+        	colour = "I see a yellow object"
+        	mask += mask3
+    	return mask, colour
+
+    	if np.any(lower == [8, 180, 100]):          
+        	colour = "I see an orange object"
+        	mask += mask4
+    	return mask, colour
+
+    	if np.any(lower == [38, 100, 100]):          
+        	colour = "I see a green object"
+        	mask += mask5
+    	return mask, colour
+
+    	if np.any(lower == [150, 0, 0]):
+        	colour = "I see a purple object"
+        	mask += mask6
+    	return mask, colour
+    return mask, colour
+     
     output = cv2.bitwise_and(hsv, hsv, mask = mask)
     # convert to BGR
     output = cv2.cvtColor(output, cv2.COLOR_HSV2BGR)
@@ -123,12 +225,7 @@ class detect:
     keypoints = detector.detect(output)
     
     index = Int32MultiArray();
-    index.data = [-1, -1]
-    
-    if len(keypoints) > 0:
-        index.data = [int(keypoints[0].pt[0]), int(keypoints[0].pt[1])]
-        colour = "I see an object"
-        
+    index.data = [-1, -1]   
         
     im_with_keypoints = cv2.drawKeypoints(output, keypoints, np.array([]), (0, 0, 255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
@@ -197,5 +294,4 @@ def main(args):
 
 if __name__ == '__main__':
     main(sys.argv)
-
 
