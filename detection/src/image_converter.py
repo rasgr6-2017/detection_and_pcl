@@ -13,7 +13,12 @@ from cv_bridge import CvBridge, CvBridgeError
 
 
 #### Blob detection of different colours and Canny edge detector ####
-
+class colourClass:
+    keypoint=None
+    output=None
+    mask=None
+    im_with_keypoints=None
+    
 class detect:
 
     redBounds = [([0,0,80], [10,255,255])]
@@ -24,7 +29,9 @@ class detect:
     purpleBounds = [([150, 0, 0], [170, 255, 255])]
     hsv=None
     
-    outputs={'red': None,  'blue': None,  'yellow':None,  'orange': None,  'green': None,  'purple': None }
+    # save to this dictonary [output, keypoint]
+
+    outputs={'red':colourClass,   'blue': colourClass,  'yellow':colourClass,  'orange': colourClass,  'green': colourClass,  'purple': colourClass }
 
     
   # Get camera info
@@ -60,7 +67,7 @@ class detect:
         
         cv2.imshow("hsv", self.hsv)
         cv2.waitKey(3)
-           
+        
         params = cv2.SimpleBlobDetector_Params()
     
     # detect using different params
@@ -75,10 +82,45 @@ class detect:
         
         self.detector = cv2.SimpleBlobDetector(params)
         
-        #self.bound(self.redBounds)
+        # check all colours
         self.bound(self.blueBounds,  "blue")
         self.bound(self.redBounds,  "red")
+        self.bound(self.greenBounds,  "green")
         self.bound(self.purpleBounds,  "purple")
+        self.bound(self.yellowBounds,  "yellow")
+        self.bound(self.orangeBounds,  "orange")
+        
+        #add masks together
+        #add outputs together
+        #show images
+        #say/print what we saw in this iteration
+        
+        totalMask=None
+        total_im_with_keypoints=None
+        totalOuput=None
+        detected = "I found a "
+        for col in self.outputs:
+            if not (self.outputs[col].mask ==None): # if color detected
+                if (totalMask==None): totalMask=self.outputs[col].mask # first color detected
+                else: 
+                    totalMask = cv2.add(totalMask,  self.outputs[col].mask) # add masks together from all colors that where found
+                
+                #if not (self.outputs[col].output == None): totalOutput = cv2.add(totalOutput, self.outputs[col].output) # add outputs together
+                
+                if (total_im_with_keypoints==None): total_im_with_keypoints = self.outputs[col].im_with_keypoints 
+                else: 
+                    total_im_with_keypoints=cv2.add(total_im_with_keypoints, self. outputs[col].im_with_keypoints) # add keypoints together
+                detected+= col + ", "
+            else:
+                detected=""
+                
+        if not (detected==""): # something found
+            detected+= " object"
+            print (detected)
+            cv2.imshow('Total Output', totalMask) # show total output
+            cv2.waitKey(3)
+            cv2.imshow("Total Detection", total_im_with_keypoints) # show all keypoints together
+            cv2.waitKey(3)
 
     # hsv values for each colour we want to detect, hsv changes with different camera
     
@@ -91,9 +133,10 @@ class detect:
         for (lower, upper) in boundaries:
             lower = np.array(lower, dtype = "uint8")
             upper = np.array(upper, dtype = "uint8")
-
+            
             mask = cv2.inRange(self.hsv, lower, upper)
-            self.outputs[col]=mask
+            # save output to dictionary
+            self.outputs[col].mask=mask
             
             output = cv2.bitwise_and(self.hsv, self.hsv, mask = mask)
             
@@ -101,6 +144,7 @@ class detect:
             output = cv2.cvtColor(output, cv2.COLOR_HSV2BGR)
             # convert to grey 
             grey = cv2.cvtColor(output, cv2.COLOR_BGR2GRAY)
+            
     
             # uses binary and Otsu's thresholding
             ret, thresholdedIm = cv2.threshold(grey,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
@@ -120,38 +164,45 @@ class detect:
             # draw contours onto vid stream
             cv2.drawContours(output, contours, -1, (0,255,0), 3)
             index = Int32MultiArray();
-            index.data = [-1, -1]    
-            
-            # add masks together
-            totalMask=mask
-            for m in self.outputs:
-                if not (self.outputs[m]==None) :
-                    totalMask+=self.outputs[m]
-            totalMask-=mask
-            
-            # save keypoint for each mask in dictionary 
-            # create new image with all masks 
+            index.data = [-1, -1]           
             
             output2 = cv2.bitwise_and(self.hsv, self.hsv, mask = mask)
-            cv2.imshow('output', output)
-            cv2.waitKey(1)
             
+            #save output to dictionary
+            self.outputs[col].output=output2
+            #cv2.imshow('output', output2)
+            #cv2.waitKey(3)
+            
+            # get keypoint
             keypoints = self.detector.detect(output)
+            #save keypoint to dictionay
+            self.outputs[col].keypoint=keypoints
             
-            colour = "hello"
-            if len(keypoints) > 0:
+            colour = ""
+            if len(keypoints)  >  0:
                 index.data = [int(keypoints[0].pt[0]), int(keypoints[0].pt[1])]
                 colour = "I see a " + col + " object"
-                print (colour)
-
+                #print (colour)
+                if (col=='red'): circleColour=(255, 0, 0)
+                elif (col=='green'): circleColour=(0, 255, 0)
+                elif (col=='blue'): circleColour=(0, 0, 255)
+                elif (col=='yellow'): circleColour=(250, 240, 8)
+                elif (col=='purple'): circleColour=(250, 9, 185)
+                elif (col=='orange'): circleColour=(250, 97, 8)
+                # draw circle at keypoint for matched colour
+                im_with_keypoints = cv2.drawKeypoints(output, keypoints, np.array([]), circleColour, cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+                self.outputs[col].im_with_keypoints=im_with_keypoints # save to dictionary
+                #cv2.imshow("detection", im_with_keypoints)
+                #cv2.waitKey(3)
                 
-                im_with_keypoints = cv2.drawKeypoints(output, keypoints, np.array([]), (0, 0, 255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-                cv2.imshow("detection", im_with_keypoints)
-                cv2.waitKey(3)
             else:
-               self.outputs[col]=None
+                # reset values if nothing found
+               self.outputs[col].output = None
+               self.outputs[col].mask = None
+               self.outputs[col].keypoint = None
+               self.outputs[col].im_with_keypoints = None
             
-        return keypoints, output, colour 
+        return  output,  mask
       
 
 #### Publish to the espeak node saying that it sees whatever coloured object #### 
@@ -164,16 +215,35 @@ class detect:
         rospy.loginfo(colour) 
         espeakPub.publish(colour)
         
+#### Shape detector ####
+    
+    def hough(self, shape):
+    
+        bgr = cv2.cvtColor(self.hsv, cv2.COLOR_HSV2BGR)
+        # convert to grey 
+        grey = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+       
+        edges = cv2.Canny(grey, 100, 200, apertureSize = 3)
+        
+        lines = cv2.HoughLines(edges,1,np.pi/180,200)
+            
+        print(lines)
+        for rho,theta in lines[0]:
+            a = np.cos(theta)
+            b = np.sin(theta)
+            x0 = a*rho
+            y0 = b*rho
+            x1 = int(x0 + 1000*(-b))
+            y1 = int(y0 + 1000*(a))
+            x2 = int(x0 - 1000*(-b))
+            y2 = int(y0 - 1000*(a))
+                
+            cv2.line(self.hsv,(x1,y1),(x2,y2),(0,0,255),2)
 
-   
-    ################## TEST ###################
+            
+        cv2.imshow("lines", lines)
+        cv2.waitKey(3)
 
-    # edge detector
-
-    #edges = cv2.Canny(grey, 120, 120)
-    #th = 70
-    #tw = th
-    #cv2.imshow("Edges", edges)
       
     #template = cv2.resize(self.temp, (tw, th), interpolation=cv2.INTER_CUBIC)
     #template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
