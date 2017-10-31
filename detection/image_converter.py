@@ -21,12 +21,12 @@ class colourClass:
     
 class detect:
 
-    redBounds = [([0,0,80], [10,255,255])]
+    redBounds = [([0,100,70], [10,255,255])]
     blueBounds = [([80,150,0], [115,255,255])]
-    yellowBounds = [([17, 200, 100], [28, 255, 255])]
-    orangeBounds = [([8, 180, 100], [12, 255, 255])]
-    greenBounds = [([38, 100, 100],  [65, 255, 255])]
-    purpleBounds = [([150, 0, 0], [170, 255, 255])]
+    yellowBounds = [([17, 100, 100], [25, 255, 255])]
+    orangeBounds = [([8, 0, 100], [16, 255, 255])]
+    greenBounds = [([30, 100, 53],  [80, 255, 255])]
+    purpleBounds = [([110, 0, 0], [150, 255, 255])]
     hsv=None
     
     # save to this dictonary [output, keypoint]
@@ -41,7 +41,7 @@ class detect:
 
     
     
-  # Get camera info
+  # Get camera info-
 
     def __init__(self):
         self.image_pub = rospy.Publisher("image_topic_2",Image, queue_size=10)
@@ -72,7 +72,7 @@ class detect:
         (rows,cols,channels) = cv_image.shape
         self.hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         
-        cv2.imshow("hsv", self.hsv)
+        cv2.imshow("hsv", cv_image)
         cv2.waitKey(3)
         
         params = cv2.SimpleBlobDetector_Params()
@@ -97,15 +97,11 @@ class detect:
         self.bound(self.yellowBounds,  "yellow")
         self.bound(self.orangeBounds,  "orange")
         
-        #add masks together
-        #add outputs together
-        #show images
-        #say/print what we saw in this iteration
-        
+        #add masks together, add outputs together, show images, say/print what we saw in this iteration
         
         totalMask=None
         total_im_with_keypoints=None
-        totalOuput=None
+        totalOutput=None
         detected = "I found : "
         for col in self.outputs:
 
@@ -115,7 +111,10 @@ class detect:
                 else: 
                     totalMask = cv2.bitwise_and(totalMask,  self.outputs[col].mask) # add masks together from all colors that where found
                 
-                #if not (self.outputs[col].output == None): totalOutput = cv2.add(totalOutput, self.outputs[col].output) # add outputs together
+                if  (totalOutput == None): 
+                    totalOutput = self.outputs[col].output
+                else:
+                    totalOutput = cv2.bitwise_and(totalOutput, self.outputs[col].output) # add outputs together
                 
                 if (total_im_with_keypoints==None): 
                     total_im_with_keypoints = self.outputs[col].im_with_keypoints 
@@ -123,18 +122,14 @@ class detect:
                     total_im_with_keypoints=cv2.bitwise_and(total_im_with_keypoints, self. outputs[col].im_with_keypoints) # add keypoints together
                 detected+= col + ", "
                 
-            else:
                 
-                detected="I found a: "
-                
-        if not (detected=="I found a: "): # something found
+        if not (totalMask==None): # something found
             print (detected)
-            #cv2.imshow('Total Output', totalMask) # show total output
-           # cv2.waitKey(3)
             cv2.imshow("Total Detection", total_im_with_keypoints) # show all keypoints together
             cv2.waitKey(3)
-
-    # hsv values for each colour we want to detect, hsv changes with different camera
+        # now we should find the shapes and then classify what object it is.
+        # then choose wich object that is closest or has more points?
+        # say a sentance in the speaker and send command to arm
     
 
             
@@ -163,19 +158,25 @@ class detect:
             ret, thresholdedIm = cv2.threshold(grey,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
             # using closing (dilation followed by erosion) to fill gaps
             kernel = np.ones((10,10),np.uint8)
-            #closing = cv2.dilate(thresholdedIm, kernel, iterations = 1)
-            closing = cv2.morphologyEx(thresholdedIm, cv2.MORPH_CLOSE, kernel)
             
-            output = cv2.bitwise_not(closing)
+            output = cv2.erode(thresholdedIm, kernel,iterations = 1)
+            kernel2 = np.ones((10,10),np.uint8)
+            output = cv2.dilate(output, kernel2,iterations = 1)
+            kernel2 = np.ones((20,20),np.uint8)
+            output = cv2.erode(output, kernel2,iterations = 3)
+            
+            #closing = cv2.dilate(output, kernel2, iterations = 1)
+            #closing = cv2.morphologyEx(thresholdedIm, cv2.MORPH_CLOSE, kernel)
+            output = cv2.bitwise_not(output)
         
             
             ret2, thresholdedIm2 = cv2.threshold(output,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)  
 
             # find contours
             
-            contours, hierarchy = cv2.findContours(thresholdedIm2,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+            #contours, hierarchy = cv2.findContours(thresholdedIm2,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
             # draw contours onto vid stream
-            cv2.drawContours(output, contours, -1, (0,255,0), 3)
+            #cv2.drawContours(output, contours, -1, (255,255,0), 3)
             index = Int32MultiArray();
             index.data = [-1, -1]           
             
@@ -197,7 +198,7 @@ class detect:
                 colour = "I see a " + col + " object"
                 #print (colour)
                 if (col=='red'): circleColour=(0, 0, 255)
-                elif (col=='green'): circleColour=(0, 0, 255)
+                elif (col=='green'): circleColour=(0, 255, 0)
                 elif (col=='blue'): circleColour=(255, 0, 0)
                 elif (col=='yellow'): circleColour=(9, 240, 250)
                 elif (col=='purple'): circleColour=(185, 9, 250)
