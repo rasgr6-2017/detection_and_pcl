@@ -130,7 +130,7 @@ class detect:
         # now we should find the shapes and then classify what object it is.
         # then choose wich object that is closest or has more points?
         # say a sentance in the speaker and send command to arm
-    
+        #self.hough(cv_image)
 
             
 
@@ -231,34 +231,49 @@ class detect:
         espeakPub.publish(colour)
         
 #### Shape detector ####
+    def shapeDetector(self):
+        # take pictures of all objects and name them after shape 
+        # current shape = cannyEdgeDetection(output)
+        # exclude some shapes after color
+        # matchShapes() with preprocessed templates (or use SIFT?)
+        # send pixel coord if found to PCL node
+        
+        return
+        
+    def initTemplateImages(self):
+        # preprocess local images 
+        #convert to binary shapes just like the camera image
+        # save to dict
+        return
     
-    def hough(self, shape):
+    def hough(self,  bgr): # this works mroe for 2D, maybe for booby trap ?
     
-        bgr = cv2.cvtColor(self.hsv, cv2.COLOR_HSV2BGR)
+        #bgr = cv2.cvtColor(self.hsv, cv2.COLOR_HSV2BGR)
         # convert to grey 
         grey = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
        
-        edges = cv2.Canny(grey, 100, 200, apertureSize = 3)
+        edges = cv2.Canny(grey, 50, 50*3, apertureSize = 3)
         
         lines = cv2.HoughLines(edges,1,np.pi/180,200)
+        
+        
+        if not (lines == None): # lines detected
+            #print(lines)
+            for rho,theta in lines[0]:
+                a = np.cos(theta)
+                b = np.sin(theta)
+                x0 = a*rho
+                y0 = b*rho
+                x1 = int(x0 + 1000*(-b))
+                y1 = int(y0 + 1000*(a))
+                x2 = int(x0 - 1000*(-b))
+                y2 = int(y0 - 1000*(a))
+                    
+                cv2.line(bgr,(x1,y1),(x2,y2),(0,0,255),2)
+             
             
-        print(lines)
-        for rho,theta in lines[0]:
-            a = np.cos(theta)
-            b = np.sin(theta)
-            x0 = a*rho
-            y0 = b*rho
-            x1 = int(x0 + 1000*(-b))
-            y1 = int(y0 + 1000*(a))
-            x2 = int(x0 - 1000*(-b))
-            y2 = int(y0 - 1000*(a))
-                
-            cv2.line(self.hsv,(x1,y1),(x2,y2),(0,0,255),2)
-
-            
-        cv2.imshow("lines", lines)
-        cv2.waitKey(3)
-
+            cv2.imshow("Shape Detector", bgr)
+            cv2.waitKey(3)
       
     #template = cv2.resize(self.temp, (tw, th), interpolation=cv2.INTER_CUBIC)
     #template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
