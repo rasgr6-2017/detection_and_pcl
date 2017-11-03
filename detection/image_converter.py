@@ -10,14 +10,18 @@ from std_msgs.msg import String
 from std_msgs.msg import Int32MultiArray
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
+import datetime
+import sys, termios, tty, os, time
+PATH=os.path.dirname(os.path.abspath(__file__))
 
-
+    
 #### Blob detection of different colours and Canny edge detector ####
 class colourClass:
     keypoint=None
     output=None
     mask=None
     im_with_keypoints=None
+    edges=None
     
 class detect:
 
@@ -39,7 +43,9 @@ class detect:
     
     outputs={'red':redClass,   'blue': blueClass,  'yellow':yellowClass,  'orange': orangeClass,  'green': greenClass,  'purple': purpleClass }
 
-    
+   # templates dict with list of shapes 
+    templates={'cube':[],  'hollow_cube':[],  'sphere':[],  'star':[],  'cross':[],  'triangle':[] }
+
     
   # Get camera info-
 
@@ -51,6 +57,7 @@ class detect:
         self.image_sub = rospy.Subscriber("/camera/rgb/image_raw",Image,self.blob)
         self.countdown = 50;
         self.alter = True;
+        self.initTemplateImages() # pre-process template images for shape detection
 
     #self.temp = cv2.imread('/home/ras26/catkin_ws/src/read_image/scripts/QR.PNG')
 
@@ -68,13 +75,14 @@ class detect:
         except CvBridgeError as e:
             print(e)
           
-        
-        (rows,cols,channels) = cv_image.shape
+
+        (rows, cols, channels) = cv_image.shape
         self.hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         
         cv2.imshow("hsv", cv_image)
         cv2.waitKey(3)
-        
+
+            
         params = cv2.SimpleBlobDetector_Params()
     
     # detect using different params
@@ -87,6 +95,13 @@ class detect:
         params.minArea = 900
         params.maxArea = 40000
         
+        # save as png image for templates (comment out this)
+        #keypress  = self.getch()
+        #if (keypress=='t'):
+            #print("saving picture...")
+            #self.takePicture(cv_image)
+        
+            
         self.detector = cv2.SimpleBlobDetector(params)
         
         # check all colours
@@ -127,6 +142,7 @@ class detect:
             print (detected)
             cv2.imshow("Total Detection", total_im_with_keypoints) # show all keypoints together
             cv2.waitKey(3)
+            
         # now we should find the shapes and then classify what object it is.
         # then choose wich object that is closest or has more points?
         # say a sentance in the speaker and send command to arm
@@ -150,7 +166,8 @@ class detect:
             
             # convert to BGR
             output = cv2.cvtColor(output, cv2.COLOR_HSV2BGR)
-            # convert to grey 
+            # convert to grey         
+
             grey = cv2.cvtColor(output, cv2.COLOR_BGR2GRAY)
             
     
@@ -164,28 +181,12 @@ class detect:
             output = cv2.dilate(output, kernel2,iterations = 1)
             kernel2 = np.ones((20,20),np.uint8)
             output = cv2.erode(output, kernel2,iterations = 3)
-            
+            output = cv2.bitwise_not(output)
             #closing = cv2.dilate(output, kernel2, iterations = 1)
             #closing = cv2.morphologyEx(thresholdedIm, cv2.MORPH_CLOSE, kernel)
-            output = cv2.bitwise_not(output)
-        
-            
-            ret2, thresholdedIm2 = cv2.threshold(output,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)  
 
-            # find contours
-            
-            #contours, hierarchy = cv2.findContours(thresholdedIm2,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
-            # draw contours onto vid stream
-            #cv2.drawContours(output, contours, -1, (255,255,0), 3)
             index = Int32MultiArray();
             index.data = [-1, -1]           
-            
-            output2 = cv2.bitwise_and(self.hsv, self.hsv, mask = mask)
-            
-            #save output to dictionary
-            self.outputs[col].output=output
-            #cv2.imshow('output', output2)
-            #cv2.waitKey(3)
             
             # get keypoint
             keypoints = self.detector.detect(output)
@@ -194,6 +195,17 @@ class detect:
             
             colour = ""
             if len(keypoints)  >  0:
+                
+                # get shape on binary image
+                edges = cv2.Canny(grey,  10,  200) # get edges, threshold1 and 2
+                contours, hierarchy = cv2.findContours(edges,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(edges, contours, -1, (255,0,0), 2)
+                cv2.imshow('Edge Detection', edges)
+                cv2.waitKey(3)
+                self.outputs[col].edges = edges # save its shape to dict
+                
+                
+                
                 index.data = [int(keypoints[0].pt[0]), int(keypoints[0].pt[1])]
                 colour = "I see a " + col + " object"
                 #print (colour)
@@ -206,8 +218,8 @@ class detect:
                 # draw circle at keypoint for matched colour
                 im_with_keypoints = cv2.drawKeypoints(output, keypoints, np.array([]), circleColour, cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
                 self.outputs[col].im_with_keypoints=im_with_keypoints # save to dictionary
-                #cv2.imshow("detection", im_with_keypoints)
-                #cv2.waitKey(3)
+                self.shapeDetector( edges)
+                
                 
             else:
                 # reset values if nothing found
@@ -215,6 +227,7 @@ class detect:
                self.outputs[col].mask = None
                self.outputs[col].keypoint = None
                self.outputs[col].im_with_keypoints = None
+               self.outputs[col].edges=None
         # clear variables
         
         return  
@@ -231,21 +244,49 @@ class detect:
         espeakPub.publish(colour)
         
 #### Shape detector ####
-    def shapeDetector(self):
+    def shapeDetector(self,  shape):
         # take pictures of all objects and name them after shape 
         # current shape = cannyEdgeDetection(output)
         # exclude some shapes after color
         # matchShapes() with preprocessed templates (or use SIFT?)
         # send pixel coord if found to PCL node
-        
-        return
+        #templateShape=self.templates['triangle'][0]
+        #ret = cv2.matchShapes(templateShape,  shape,  cv2.cv.CV_CONTOURS_MATCH_I1,  0)
+        #print(ret)
+        return 
         
     def initTemplateImages(self):
         # preprocess local images 
         #convert to binary shapes just like the camera image
-        # save to dict
+        print("Pre-processing template images...")
+        
+        for shapeType in self.templates:
+            directory=PATH+'/objects/'+shapeType+'/'
+            for filename in os.listdir(directory): # go through all template images in the folder
+                if filename.endswith(".png"): # is a png
+                    img = cv2.imread(directory+filename) # read image from local disk
+                    # ->>>>>need to mask for its color like in bounds function!!!!!!!!!!!!!!!! -<<<<
+                    # otherwise we see other edges in background
+                    grey=self.imgToBinary(img) # process image
+                    edges = cv2.Canny(grey,  50,  50*3) # get edges, threshold1 and 2
+                    self.templates[shapeType].append(edges) # save shape data to list
+                    #cv2.imshow("Shape", edges)
+                    #cv2.waitKey(3)
+        
+        print("Done!")
         return
     
+    def imgToBinary(self,  img):
+        grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) # to binary
+        ret, thresholdedIm = cv2.threshold(grey,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        return grey
+        
+    # write image to file in local folder
+    def takePicture(self,  image):
+        print(PATH)
+        cv2.imwrite(PATH+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+".png",image)
+        return
+        
     def hough(self,  bgr): # this works mroe for 2D, maybe for booby trap ?
     
         #bgr = cv2.cvtColor(self.hsv, cv2.COLOR_HSV2BGR)
@@ -304,12 +345,22 @@ class detect:
   #  print(index.data) 
 #except CvBridgeError as e:
  #   print(e)
-  
+ 
+    # get keyboard press
+    def getch(self):
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
 
 def main(args):
   rospy.init_node('image_converter', anonymous=True)
   detection = detect()
-   
+    
   try:
     rospy.spin()
   except KeyboardInterrupt:
