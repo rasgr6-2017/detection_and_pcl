@@ -12,7 +12,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 import datetime
 import sys, termios, tty, os, time
-PATH=os.path.dirname(os.path.abspath(__file__))
+PATH=os.path.dirname(os.path.abspath(__file__)) # path of this file
 
     
 #### Blob detection of different colours and Canny edge detector ####
@@ -22,6 +22,7 @@ class colourClass:
     mask=None
     im_with_keypoints=None
     edges=None
+    shape=None
     
 class detect:
 
@@ -32,6 +33,7 @@ class detect:
     greenBounds = [([30, 100, 53],  [80, 255, 255])]
     purpleBounds = [([110, 0, 0], [150, 255, 255])]
     hsv=None
+    raw_image=None
     
     # save to this dictonary [output, keypoint]
     redClass=colourClass()
@@ -78,9 +80,9 @@ class detect:
 
         (rows, cols, channels) = cv_image.shape
         self.hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
-        
-        cv2.imshow("hsv", cv_image)
-        cv2.waitKey(3)
+        self.raw_image=cv_image
+        #cv2.imshow("hsv", cv_image)
+        #cv2.waitKey(3)
 
             
         params = cv2.SimpleBlobDetector_Params()
@@ -104,6 +106,9 @@ class detect:
             
         self.detector = cv2.SimpleBlobDetector(params)
         
+        #cv2.imshow("RAW image", self.raw_image) # show match
+        #cv2.waitKey(3)
+            
         # check all colours
         self.bound(self.blueBounds,  "blue")
         self.bound(self.redBounds,  "red")
@@ -119,18 +124,12 @@ class detect:
         totalOutput=None
         detected = "I found : "
         for col in self.outputs:
-
             if not (self.outputs[col].keypoint ==None): # if color detected
                 if (totalMask == None): 
                     totalMask = self.outputs[col].mask # first color detected
                 else: 
                     totalMask = cv2.bitwise_and(totalMask,  self.outputs[col].mask) # add masks together from all colors that where found
-                
-                if  (totalOutput == None): 
-                    totalOutput = self.outputs[col].output
-                else:
-                    totalOutput = cv2.bitwise_and(totalOutput, self.outputs[col].output) # add outputs together
-                
+
                 if (total_im_with_keypoints==None): 
                     total_im_with_keypoints = self.outputs[col].im_with_keypoints 
                 else: 
@@ -138,23 +137,19 @@ class detect:
                 detected+= col + ", "
                 
                 
-        if not (totalMask==None): # something found
-            print (detected)
-            cv2.imshow("Total Detection", total_im_with_keypoints) # show all keypoints together
+        if not (totalMask==None): # soem color found
+            #print (detected)
+            cv2.imshow("Color Detection", total_im_with_keypoints) # show all keypoints together
             cv2.waitKey(3)
-            
-        # now we should find the shapes and then classify what object it is.
-        # then choose wich object that is closest or has more points?
-        # say a sentance in the speaker and send command to arm
-        #self.hough(cv_image)
-
+                
+        # now choose which one is best! (biggest/credits)
+        # send to pcl
             
 
     # make hsv masks of video stream with upper and lower limits
     def bound(self, boundaries,  col):
 
         for (lower, upper) in boundaries:
-            
             lower = np.array(lower, dtype = "uint8")
             upper = np.array(upper, dtype = "uint8")
             
@@ -169,7 +164,6 @@ class detect:
             # convert to grey         
 
             grey = cv2.cvtColor(output, cv2.COLOR_BGR2GRAY)
-            
     
             # uses binary and Otsu's thresholding
             ret, thresholdedIm = cv2.threshold(grey,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
@@ -197,29 +191,21 @@ class detect:
             if len(keypoints)  >  0:
                 
                 # get shape on binary image
-                edges = cv2.Canny(grey,  10,  200) # get edges, threshold1 and 2
+                edges = cv2.Canny(grey,  50,  150) # get edges, threshold1 and 2
                 contours, hierarchy = cv2.findContours(edges,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
                 cv2.drawContours(edges, contours, -1, (255,0,0), 2)
-                cv2.imshow('Edge Detection', edges)
-                cv2.waitKey(3)
+#                cv2.imshow('Edge Detection', edges)
+#                cv2.waitKey(3)
                 self.outputs[col].edges = edges # save its shape to dict
-                
-                
                 
                 index.data = [int(keypoints[0].pt[0]), int(keypoints[0].pt[1])]
                 colour = "I see a " + col + " object"
-                #print (colour)
-                if (col=='red'): circleColour=(0, 0, 255)
-                elif (col=='green'): circleColour=(0, 255, 0)
-                elif (col=='blue'): circleColour=(255, 0, 0)
-                elif (col=='yellow'): circleColour=(9, 240, 250)
-                elif (col=='purple'): circleColour=(185, 9, 250)
-                elif (col=='orange'): circleColour=(9, 97, 250)
+                circleColour=self.strToBGR(col)
                 # draw circle at keypoint for matched colour
                 im_with_keypoints = cv2.drawKeypoints(output, keypoints, np.array([]), circleColour, cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
                 self.outputs[col].im_with_keypoints=im_with_keypoints # save to dictionary
-                self.shapeDetector( edges)
-                
+                shape=self.shapeDetector( grey,  col )
+                self.outputs[col].shape=shape
                 
             else:
                 # reset values if nothing found
@@ -228,11 +214,19 @@ class detect:
                self.outputs[col].keypoint = None
                self.outputs[col].im_with_keypoints = None
                self.outputs[col].edges=None
+               self.outputs[col].shape=None
         # clear variables
         
         return  
       
 
+    def strToBGR(self,  col):
+        if (col=='red'): return (0, 0, 255)
+        elif (col=='green'): return (0, 255, 0)
+        elif (col=='blue'): return (255, 0, 0)
+        elif (col=='yellow'): return (9, 240, 250)
+        elif (col=='purple'): return (185, 9, 250)
+        elif (col=='orange'): return (9, 97, 250)
 #### Publish to the espeak node saying that it sees whatever coloured object #### 
     def speak(self, colour):
       
@@ -244,16 +238,94 @@ class detect:
         espeakPub.publish(colour)
         
 #### Shape detector ####
-    def shapeDetector(self,  shape):
+    def shapeDetector(self,  image,  color):
         # take pictures of all objects and name them after shape 
         # current shape = cannyEdgeDetection(output)
         # exclude some shapes after color
         # matchShapes() with preprocessed templates (or use SIFT?)
         # send pixel coord if found to PCL node
-        #templateShape=self.templates['triangle'][0]
-        #ret = cv2.matchShapes(templateShape,  shape,  cv2.cv.CV_CONTOURS_MATCH_I1,  0)
+        #templateShape = self.templates['triangle'][0]
         #print(ret)
-        return 
+        #templateContour = cv2.imread(PATH+"/objects/hollow_cube/red_0.png", 0) 
+       
+        
+        #w, h = templateContour.shape[::-1]
+        
+        #contours = cv2.cvtColor(self.raw_image, cv2.COLOR_BGR2GRAY)
+        # ignore if bounding area too big?
+        # fit lines?
+#        sortedContours = sorted(contours, key=cv2.contourArea,  reverse=True)  # sort after biggest area
+#        for c in sortedContours :
+#            for tempC in templateContour:
+#                ret = cv2.matchShapes(tempC,  c,  cv2.cv.CV_CONTOURS_MATCH_I1,  0)
+#                if (ret <= 0.1):
+#                    #print(ret)
+#                    cv2.drawContours(img3, c, -1, (255,0,0), 2)
+#                    cv2.imshow("match", img3)
+#                    cv2.waitKey(3)
+#               
+                
+        #self.hough(contours,  img3)
+        
+        #templateContour = self.templates['hollow_cube'][0] # test image
+        
+        ## TEMPLATE MATCHING  almsot working ######
+        shapeMask=self.raw_image
+        threshold = 0.8
+        rectangle_color=self.strToBGR(color)
+        # go through all possible shape templates (except some)
+        for shape in self.templates: 
+            # exclude some possiblities depending on color   
+            if self.checkIfShapeExist(shape,  color):
+                for model in self.templates[shape]: # go through all models
+                    w, h = model.shape[::-1]
+                    res = cv2.matchTemplate(image, model, cv2.TM_CCOEFF_NORMED)
+                    loc = np.where( res >= threshold)
+                    match=False
+                    for pt in zip(*loc[::-1]):
+                        cv2.rectangle(shapeMask, pt, (pt[0] + w, pt[1] + h), rectangle_color, 2) # match rectangle
+                        print("It's a "+ color + " " +  shape)
+                        match=True
+                    
+                    cv2.imshow("Object Recogntion", shapeMask) # show match
+                    cv2.waitKey(3)
+                    if match:
+                        return shapeMask# done matching
+                    
+        # Grey mask of current image should have bigger area
+        # ignore very large color detections (floor, wall, etc)
+        # take more model images, more angles
+        # hollow_cube vs Cube is very difficult
+        # Star has not been tested...
+        # cross is very bad, because of purple mask being too small
+        
+        return None
+        
+    
+    def checkIfShapeExist(self,  shape,  color):
+        #print(shape)
+        if shape=='cube':
+            if color=='green' or color=='blue' or color=='yellow':
+               return True
+        elif shape=='hollow_cube':
+            if color=='red' or color=='green':
+                return True
+        elif shape=='sphere':
+            if color=='red' or color=='yellow':
+                return True
+        elif shape=='triangle':
+            if color=='blue':
+                return True
+        elif shape=='cylinder':
+            if color=='red' or color=='green':
+                return True
+        elif shape=='cross':
+            if color=='purple' or color=='orange':
+                return True
+        elif shape=='star':
+            if color=='orange' or color=='purple':
+                return True
+        return False
         
     def initTemplateImages(self):
         # preprocess local images 
@@ -265,21 +337,51 @@ class detect:
             for filename in os.listdir(directory): # go through all template images in the folder
                 if filename.endswith(".png"): # is a png
                     img = cv2.imread(directory+filename) # read image from local disk
-                    # ->>>>>need to mask for its color like in bounds function!!!!!!!!!!!!!!!! -<<<<
-                    # otherwise we see other edges in background
-                    grey=self.imgToBinary(img) # process image
-                    edges = cv2.Canny(grey,  50,  50*3) # get edges, threshold1 and 2
-                    self.templates[shapeType].append(edges) # save shape data to list
-                    #cv2.imshow("Shape", edges)
-                    #cv2.waitKey(3)
+                    img=self.maskColor(filename,  img) # mask color to remove background
+                    grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) # to binary
+                    ret, thresholdedIm = cv2.threshold(grey,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+                    edges = cv2.Canny(grey,  50,  150) # get edges, threshold1 and 2
+                    contours, hierarchy = cv2.findContours(edges,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(edges, contours, -1, (255,0,0), 2)
+                    self.templates[shapeType].append(grey) # save shape data to list
+#                    print(shapeType+" - "+filename)
+#                    print(len(contours))
+#                    print(" ")
+#                    cv2.imshow("Shape2", grey)
+#                    cv2.waitKey(3)
+#                    self.getch()
         
         print("Done!")
         return
-    
-    def imgToBinary(self,  img):
-        grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) # to binary
-        ret, thresholdedIm = cv2.threshold(grey,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        return grey
+        
+    def maskColor(self,  file, img):
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV) # to hsv
+        output=None
+        # check what color the image model is
+        if (file.startswith('red')):
+            boundaries=self.redBounds
+        elif (file.startswith('blue')):
+            boundaries=self.blueBounds
+        elif (file.startswith('yellow')):
+            boundaries=self.yellowBounds
+        elif (file.startswith('green')):
+            boundaries=self.greenBounds
+        elif (file.startswith('orange')):
+            boundaries=self.orangeBounds
+        elif (file.startswith('purple')):
+            boundaries=self.purpleBounds
+            
+        for (lower, upper) in boundaries:
+            lower = np.array(lower, dtype = "uint8")
+            upper = np.array(upper, dtype = "uint8")
+            
+            mask = cv2.inRange(hsv, lower, upper)
+            output = cv2.bitwise_and(hsv, hsv, mask = mask)
+            
+            # convert to BGR
+            output = cv2.cvtColor(output, cv2.COLOR_HSV2BGR)
+        return output
+
         
     # write image to file in local folder
     def takePicture(self,  image):
@@ -287,34 +389,25 @@ class detect:
         cv2.imwrite(PATH+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+".png",image)
         return
         
-    def hough(self,  bgr): # this works mroe for 2D, maybe for booby trap ?
+    def hough(self,  edges,  img): # this works mroe for 2D, maybe for booby trap ?
     
         #bgr = cv2.cvtColor(self.hsv, cv2.COLOR_HSV2BGR)
         # convert to grey 
-        grey = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-       
-        edges = cv2.Canny(grey, 50, 50*3, apertureSize = 3)
-        
-        lines = cv2.HoughLines(edges,1,np.pi/180,200)
-        
+        #grey = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+
+        lines = cv2.HoughLinesP(edges, rho = 1, theta = 1*np.pi/180, threshold = 50, minLineLength = 70, maxLineGap = 20)
         
         if not (lines == None): # lines detected
-            #print(lines)
-            for rho,theta in lines[0]:
-                a = np.cos(theta)
-                b = np.sin(theta)
-                x0 = a*rho
-                y0 = b*rho
-                x1 = int(x0 + 1000*(-b))
-                y1 = int(y0 + 1000*(a))
-                x2 = int(x0 - 1000*(-b))
-                y2 = int(y0 - 1000*(a))
-                    
-                cv2.line(bgr,(x1,y1),(x2,y2),(0,0,255),2)
-             
             
-            cv2.imshow("Shape Detector", bgr)
-            cv2.waitKey(3)
+            if len(lines[0]) < 100: # filter errors
+                i=0
+                for leftx, boty, rightx, topy in lines[0]:
+                    cv2.line(img,(leftx, boty), (rightx,topy),(0,0,255),2)
+                    i += 1
+                   # if (i > 3):
+                        #break
+                cv2.imshow("Shape Detector", img)
+                cv2.waitKey(3)
       
     #template = cv2.resize(self.temp, (tw, th), interpolation=cv2.INTER_CUBIC)
     #template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
@@ -356,6 +449,59 @@ class detect:
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
+        
+    def drawMatches(self,  img1, kp1, img2, kp2, matches):
+#    
+#    My own implementation of cv2.drawMatches as OpenCV 2.4.9
+#    does not have this function available but it's supported in OpenCV 3.0.0
+
+        # Create a new output image that concatenates the two images together
+        # (a.k.a) a montage
+        rows1 = img1.shape[0]
+        cols1 = img1.shape[1]
+        rows2 = img2.shape[0]
+        cols2 = img2.shape[1]
+
+        out = np.zeros((max([rows1,rows2]),cols1+cols2,3), dtype='uint8')
+
+        # Place the first image to the left
+        out[:rows1, :cols1] = np.dstack([img1])
+
+        # Place the next image to the right of it
+        out[:rows2, cols1:] = np.dstack([img2])
+
+        # For each pair of points we have between both images
+        # draw circles, then connect a line between them
+        for mat in matches:
+
+            # Get the matching keypoints for each of the images
+            img1_idx = mat.queryIdx
+            img2_idx = mat.trainIdx
+
+            # x - columns
+            # y - rows
+            (x1,y1) = kp1[img1_idx].pt
+            (x2,y2) = kp2[img2_idx].pt
+
+            # Draw a small circle at both co-ordinates
+            # radius 4
+            # colour blue
+            # thickness = 1
+            cv2.circle(out, (int(x1),int(y1)), 4, (255, 0, 0), 1)
+            cv2.circle(out, (int(x2)+cols1,int(y2)), 4, (255, 0, 0), 1)
+
+            # Draw a line in between the two points
+            # thickness = 1
+            # colour blue
+            cv2.line(out, (int(x1),int(y1)), (int(x2)+cols1,int(y2)), (255, 0, 0), 1)
+
+        # Show the image
+        # cv2.imshow('Matched Features', out)
+        # cv2.waitKey(0)
+        # cv2.destroyWindow('Matched Features')
+
+        # Also return the image if you'd like a copy
+        return out
 
 def main(args):
   rospy.init_node('image_converter', anonymous=True)
