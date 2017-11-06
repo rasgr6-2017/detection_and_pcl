@@ -23,6 +23,8 @@ class colourClass:
     im_with_keypoints=None
     edges=None
     shape=None
+    shapeName=None
+    index=None
     
 class detect:
 
@@ -102,7 +104,6 @@ class detect:
         #if (keypress=='t'):
             #print("saving picture...")
             #self.takePicture(cv_image)
-        
             
         self.detector = cv2.SimpleBlobDetector(params)
         
@@ -123,6 +124,7 @@ class detect:
         total_im_with_keypoints=None
         totalOutput=None
         detected = "I found : "
+        detectedShapeColor="I see a "
         for col in self.outputs:
             if not (self.outputs[col].keypoint ==None): # if color detected
                 if (totalMask == None): 
@@ -134,18 +136,45 @@ class detect:
                     total_im_with_keypoints = self.outputs[col].im_with_keypoints 
                 else: 
                     total_im_with_keypoints=cv2.bitwise_and(total_im_with_keypoints, self. outputs[col].im_with_keypoints) # add keypoints together
+                
+                if not self.outputs[col].shapeName==None: # could detect shape also
+                    detectedShapeColor +=col + " " + self.outputs[col].shapeName + ", "
                 detected+= col + ", "
                 
                 
-        if not (totalMask==None): # soem color found
+        if not (totalMask==None): # some color found
             #print (detected)
+            if not (detectedShapeColor=="I see a "):
+                print(detectedShapeColor)
+                pixel_coordinate = Int32MultiArray()
+                pixel_coordinate.data=[-1, -1]  
+                pixel_coordinate.data=self.chooseObject() # choose object and get pixel coordinate
+                self.speakString=detectedShapeColor # speak this
+
+                try:
+                    self.image_pub.publish(self.bridge.cv2_to_imgmsg(self.raw_image, "bgr8"))
+                    self.pixel_pub.publish(pixel_coordinate)
+                    #print(pixel_coordinate) 
+                except CvBridgeError as e:
+                    print(e)
+                
             cv2.imshow("Color Detection", total_im_with_keypoints) # show all keypoints together
             cv2.waitKey(3)
+            
                 
         # now choose which one is best! (biggest/credits)
         # send to pcl
             
-
+            
+    # choose object from list of objects
+    def chooseObject(self):
+        for object in self.outputs:
+            if not self.outputs[object].shapeName==None: # go through all found objects
+                # take the one with highest point or random
+                return object.index # pixel coord
+                
+        
+        
     # make hsv masks of video stream with upper and lower limits
     def bound(self, boundaries,  col):
 
@@ -179,7 +208,7 @@ class detect:
             #closing = cv2.dilate(output, kernel2, iterations = 1)
             #closing = cv2.morphologyEx(thresholdedIm, cv2.MORPH_CLOSE, kernel)
 
-            index = Int32MultiArray();
+            index = Int32MultiArray()
             index.data = [-1, -1]           
             
             # get keypoint
@@ -199,6 +228,8 @@ class detect:
                 self.outputs[col].edges = edges # save its shape to dict
                 
                 index.data = [int(keypoints[0].pt[0]), int(keypoints[0].pt[1])]
+                self.outputs[col].index=index.data
+                
                 colour = "I see a " + col + " object"
                 circleColour=self.strToBGR(col)
                 # draw circle at keypoint for matched colour
@@ -206,6 +237,7 @@ class detect:
                 self.outputs[col].im_with_keypoints=im_with_keypoints # save to dictionary
                 shape=self.shapeDetector( grey,  col )
                 self.outputs[col].shape=shape
+                
                 
             else:
                 # reset values if nothing found
@@ -215,6 +247,8 @@ class detect:
                self.outputs[col].im_with_keypoints = None
                self.outputs[col].edges=None
                self.outputs[col].shape=None
+               self.outputs[col].shapeName=None
+               self.outputs[col].index=None
         # clear variables
         
         return  
@@ -228,14 +262,14 @@ class detect:
         elif (col=='purple'): return (185, 9, 250)
         elif (col=='orange'): return (9, 97, 250)
 #### Publish to the espeak node saying that it sees whatever coloured object #### 
-    def speak(self, colour):
+    def speak(self):
       
         espeakPub = rospy.Publisher('/espeak/string', String, queue_size = 10)
         rospy.init_node('image_converter', anonymous=True)
-        rate = rospy.Rate(0)
+        rate = rospy.Rate(1)
     
-        rospy.loginfo(colour) 
-        espeakPub.publish(colour)
+        #rospy.loginfo(self.speakString) 
+        espeakPub.publish(self.speakString)
         
 #### Shape detector ####
     def shapeDetector(self,  image,  color):
@@ -271,7 +305,7 @@ class detect:
         
         ## TEMPLATE MATCHING  almsot working ######
         shapeMask=self.raw_image
-        threshold = 0.8
+        threshold = 0.82
         rectangle_color=self.strToBGR(color)
         # go through all possible shape templates (except some)
         for shape in self.templates: 
@@ -284,9 +318,9 @@ class detect:
                     match=False
                     for pt in zip(*loc[::-1]):
                         cv2.rectangle(shapeMask, pt, (pt[0] + w, pt[1] + h), rectangle_color, 2) # match rectangle
-                        print("It's a "+ color + " " +  shape)
+                        #print("It's a "+ color + " " +  shape)
+                        self.outputs[color].shapeName=shape # save to dictionary
                         match=True
-                    
                     cv2.imshow("Object Recogntion", shapeMask) # show match
                     cv2.waitKey(3)
                     if match:
@@ -431,13 +465,6 @@ class detect:
     #cv2.waitKey(3)
     ###########################################
 
-
-#try:
-    #  self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image, "bgr8"))
- #   self.pixel_pub.publish(index)
-  #  print(index.data) 
-#except CvBridgeError as e:
- #   print(e)
  
     # get keyboard press
     def getch(self):
@@ -449,7 +476,8 @@ class detect:
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
-        
+                            
+                    
     def drawMatches(self,  img1, kp1, img2, kp2, matches):
 #    
 #    My own implementation of cv2.drawMatches as OpenCV 2.4.9
