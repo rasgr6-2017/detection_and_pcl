@@ -1,0 +1,77 @@
+#!/usr/bin/env python
+from __future__ import print_function
+import roslib
+roslib.load_manifest('simple_detection')
+import sys
+import rospy
+import cv2
+import numpy as np
+import rosbag
+from std_msgs.msg import String, UInt8, Time
+from std_msgs.msg import Int32MultiArray
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
+import datetime
+import sys, termios, tty, os, time
+
+def __init__(self):
+        self.image_pub = rospy.Publisher("image_output",Image, queue_size=10)
+        self.pixel_pub = rospy.Publisher("pixel_index", Int32MultiArray, queue_size=10)
+
+        bridge = CvBridge()
+        self.image_sub = rospy.Subscriber("/camera/rgb/image_raw",Image,self.blob)
+        self.countdown = 50;
+        self.alter = True;
+        self.initTemplateImages() # pre-process template images for shape detection
+        
+
+
+
+def QR(temp):
+
+        try:
+            cv_image = bridge.imgmsg_to_cv2(data, "bgr8")
+        except CvBridgeError as e:
+            print(e)
+          
+
+        (rows, cols, channels) = cv_image.shape
+        #hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
+        raw_image=cv_image
+        
+        
+        output = cv2.cvtColor(output, cv2.COLOR_BGR2GRAY)
+        
+        edges = cv2.Canny(grey, 120, 120)
+        
+        print('here')
+ 
+        template = cv2.Canny(temp, 120, 120)
+        result = cv2.matchTemplate(edges, template, cv2.TM_CCOEFF)
+        (_, maxValue, minLoc, maxLoc) = cv2.minMaxLoc(result)
+        topLeft = maxLoc
+        botRight = (topLeft[0] + int(tw*1), topLeft[1] + int(th*1))
+        roi = gray[topLeft[1]:botRight[1], topLeft[0]:botRight[0]]
+        
+        mask = np.zeros(edges.shape, dtype="uint8")
+        grey = cv2.addWeighted(edges, 0.25, mask, 0.75, 0)	
+        grey[topLeft[1]:botRight[1], topLeft[0]:botRight[0]] = roi
+    
+        cv2.imshow("Template", self.temp)        
+        cv2.waitKey(3)
+        return
+        
+        
+def main(args):
+  temp = cv2.imread('src/objects/obstacle/QR.png')
+  rospy.init_node('QRdetect', anonymous=True)
+  detection = QR(temp)
+    
+  try:
+    rospy.spin()
+  except KeyboardInterrupt:
+    print("Shutting down")
+  cv2.destroyAllWindows()
+
+if __name__ == '__main__':
+    main(sys.argv)
