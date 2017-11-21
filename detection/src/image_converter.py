@@ -57,14 +57,16 @@ class detect:
         self.image_pub = rospy.Publisher("image_output",Image, queue_size=10)
         self.pixel_pub = rospy.Publisher("pixel_index", Int32MultiArray, queue_size=10)
         self.espeakPub = rospy.Publisher('/espeak/string', String, queue_size = 10)
+        self.eviPubStr = rospy.Publisher('/ras_msgs/RAS_Evidence', String, queue_size = 10)
+        self.eviPubIm = rospy.Publisher('/ras_msgs/RAS_Evidence', Image, queue_size = 10)
+        self.eviPubInt = rospy.Publisher('/ras_msgs/RAS_Evidence', uint8, queue_size = 10)
 
         self.bridge = CvBridge()
         self.image_sub = rospy.Subscriber("/camera/rgb/image_raw",Image,self.blob)
         self.countdown = 50;
         self.alter = True;
         self.initTemplateImages() # pre-process template images for shape detection
-
-        
+       
 
     def blob(self,data):
         
@@ -120,7 +122,7 @@ class detect:
         self.bound(self.yellowBounds,  "yellow")
         self.bound(self.orangeBounds,  "orange")
         
-        #add masks together, add outputs together, show images, say/print what we saw in this iteration
+        # add masks together, add outputs together, show images, say/print what we saw in this iteration
         
         totalMask=None
         total_im_with_keypoints=None
@@ -152,18 +154,40 @@ class detect:
 
                 try: # send pixel to pcl node
                     self.image_pub.publish(self.bridge.cv2_to_imgmsg(self.raw_image, "bgr8"))
-                    self.pixel_pub.publish(pixel_coordinate)
+                    self.pixel_pub.publish(pixel_coordinate)                   
                     self.speak(detectedShapeColor) # send string to speaker
-                    #print(pixel_coordinate) 
+                    #print(pixel_coordinate)
+
                 except CvBridgeError as e:
                     print(e)
                 
             if SHOW_IMAGE:
                 cv2.imshow("Color Detection", total_im_with_keypoints) # show all keypoints together
                 cv2.waitKey(3)
-            
-            
-            
+
+    ###################### TEST ######################     
+    def QR(self):
+        output = cv2.cvtColor(self.raw_image, cv2.COLOR_BGR2GRAY)        
+        edges = cv2.Canny(grey, 120, 120)
+
+        self.temp = cv2.imread('src/objects/obstacle/QR.png', 0) 
+        template = cv2.Canny(self.temp, 120, 120)
+
+        result = cv2.matchTemplate(edges, template, cv2.TM_CCOEFF)
+        (_, maxValue, minLoc, maxLoc) = cv2.minMaxLoc(result)
+        topLeft = maxLoc
+        botRight = (topLeft[0] + int(tw*1), topLeft[1] + int(th*1))
+        roi = gray[topLeft[1]:botRight[1], topLeft[0]:botRight[0]]
+        
+        mask = np.zeros(edges.shape, dtype="uint8")
+        grey = cv2.addWeighted(edges, 0.25, mask, 0.75, 0)  
+        grey[topLeft[1]:botRight[1], topLeft[0]:botRight[0]] = roi
+    
+        cv2.imshow("Template", self.temp)        
+        cv2.waitKey(3)
+        return            
+    ##################################################
+
     # choose object from list of objects
     def chooseObject(self):
         for object in self.outputs:
@@ -259,6 +283,7 @@ class detect:
         elif (col=='yellow'): return (9, 240, 250)
         elif (col=='purple'): return (185, 9, 250)
         elif (col=='orange'): return (9, 97, 250)
+
 #### Publish to the espeak node saying that it sees whatever coloured object #### 
     def speak(self,  str):
           
@@ -315,9 +340,31 @@ class detect:
                         #print("It's a "+ color + " " +  shape)
                         self.outputs[color].shapeName=shape # save to dictionary
                         match=True
+
+                        ############################## TEST ##############################
+                        # Make .txt file with object_id and it's coordinates in relation to the robot #
+                        object_id = col+"_"+shape
+                        print(object_id)
+                        group_number = 6
+
+                        objectCoord = open(object_id + ".txt", "w")
+
+                        # only need x, y coordinates - need to get rid of z #
+
+                        objectCoord.write(object_id + '\n' + pixel_coordinate)
+                        objectCoord.close()
+
+                        # publish object_id and group_number to RAS_Evidence.msg #
+
+                        self.eviPubStri.publish(object_id)
+                        self.eviPubInt.publish(group_number)
+
                     if SHOW_IMAGE:
+                        # publish shapeMask to RAS_Evidence.msg #
+                        self.eviPubIm.publish(shapeMask)
                         cv2.imshow("Object Recogntion", shapeMask) # show match
                         cv2.waitKey(3)
+                        ###################################################################
                     if match:
                         return shapeMask# done matching
                     
@@ -438,27 +485,6 @@ class detect:
                     cv2.imshow("Shape Detector", img)
                     cv2.waitKey(3)
       
-    #template = cv2.resize(self.temp, (tw, th), interpolation=cv2.INTER_CUBIC)
-    #template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-
-    # match QR code to obstacle
-    ## maybe we can use this for the shape detection ## 
-    #template = cv2.Canny(temp, 120, 120)
-    
-    #result = cv2.matchTemplate(edges, template, cv2.TM_CCOEFF)
-    #(_, maxValue, minLoc, maxLoc) = cv2.minMaxLoc(result)
-    #topLeft = maxLoc
-    #botRight = (topLeft[0] + int(tw*1), topLeft[1] + int(th*1))
-    #roi = gray[topLeft[1]:botRight[1], topLeft[0]:botRight[0]]
-        
-    #mask = np.zeros(edges.shape, dtype="uint8")
-    #grey = cv2.addWeighted(edges, 0.25, mask, 0.75, 0)	
-    #roi = grey[topLeft[1]:botRight[1], topLeft[0]:botRight[0]]
-    
-    #cv2.imshow("Template", template)        
-    #cv2.imshow("Result", grey)
-    #cv2.waitKey(3)
-    ###########################################
 
  
     # get keyboard press
