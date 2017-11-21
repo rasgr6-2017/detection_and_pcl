@@ -348,8 +348,8 @@ class detect:
                         object_id = col+"_"+shape
                         print(object_id)
                         group_number = 6
-                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        print(timestamp)
+                        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        print(stamp)
 
                         objectCoord = open(object_id + ".txt", "w")
 
@@ -362,17 +362,15 @@ class detect:
 
                         self.eviPubStri.publish(object_id)
                         self.eviPubInt.publish(group_number)
-                        self.eviPubTime.publish(timestamp)
+                        self.eviPubTime.publish(stamp)
                         # publish shapeMask to RAS_Evidence.msg #
-                        self.eviPubIm.publish(shapeMask)
+                        image_evidence = shapeMask
+                        self.eviPubIm.publish(image_evidence)
 
                         bag = rosbag.Bag(object_id + ".bag", 'w')
 
                         try:
-                            bag.write('evidence', object_id)
-                            bag.write('evidence', group_number)
-                            bag.write('evidence', timestamp)
-                            bag.write('evidence', shapeMask)
+                            bag.write('evidence', stamp + '\n' + group_number + '\n' + image_evidence + '\n' + object_id + '\n' + image_evidence + '\n' + pixel_coordinate)
 
                         finally:
                             bag.close()
