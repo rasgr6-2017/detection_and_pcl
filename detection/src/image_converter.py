@@ -7,6 +7,7 @@ import rospy
 import cv2
 import numpy as np
 from std_msgs.msg import String
+from std_msgs.msg import Time
 from std_msgs.msg import Int32MultiArray
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
@@ -60,6 +61,7 @@ class detect:
         self.eviPubStr = rospy.Publisher('/ras_msgs/RAS_Evidence', String, queue_size = 10)
         self.eviPubIm = rospy.Publisher('/ras_msgs/RAS_Evidence', Image, queue_size = 10)
         self.eviPubInt = rospy.Publisher('/ras_msgs/RAS_Evidence', uint8, queue_size = 10)
+        self.eviPubTime = rospy.Publisher('/ras_msgs/RAS_Evidence', Time, queue_size = 10)
 
         self.bridge = CvBridge()
         self.image_sub = rospy.Subscriber("/camera/rgb/image_raw",Image,self.blob)
@@ -346,6 +348,8 @@ class detect:
                         object_id = col+"_"+shape
                         print(object_id)
                         group_number = 6
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        print(timestamp)
 
                         objectCoord = open(object_id + ".txt", "w")
 
@@ -358,10 +362,22 @@ class detect:
 
                         self.eviPubStri.publish(object_id)
                         self.eviPubInt.publish(group_number)
-
-                    if SHOW_IMAGE:
+                        self.eviPubTime.publish(timestamp)
                         # publish shapeMask to RAS_Evidence.msg #
                         self.eviPubIm.publish(shapeMask)
+
+                        bag = rosbag.Bag(object_id + ".bag", 'w')
+
+                        try:
+                            bag.write('evidence', object_id)
+                            bag.write('evidence', group_number)
+                            bag.write('evidence', timestamp)
+                            bag.write('evidence', shapeMask)
+
+                        finally:
+                            bag.close()
+
+                    if SHOW_IMAGE:   
                         cv2.imshow("Object Recogntion", shapeMask) # show match
                         cv2.waitKey(3)
                         ###################################################################
