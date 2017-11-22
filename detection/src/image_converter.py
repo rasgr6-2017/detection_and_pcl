@@ -128,7 +128,6 @@ class detect:
         result = cv2.matchTemplate(edges, template, cv2.TM_CCOEFF)
         (_, maxValue, minLoc, maxLoc) = cv2.minMaxLoc(result)
         topLeft = maxLoc
-        print(maxValue)
         botRight = (topLeft[0] + int(70*1), topLeft[1] + int(70*1))
         roi = grey[topLeft[1]:botRight[1], topLeft[0]:botRight[0]]
         
@@ -137,7 +136,15 @@ class detect:
         
         grey[topLeft[1]:botRight[1], topLeft[0]:botRight[0]] = roi
         if maxValue > 2500000:
-            print("I see an obstacle")
+            detected = "I see an obstacle"
+            pixelCoord = self.chooseObject()
+            print(pixelCoord)
+            self.speak(detected)
+            txt = open(PATH+"/mapFiles/obstacle.txt", "w")
+
+            txt.write("obstacle" + '\n')
+            txt.close()
+
             
         ##################
             
@@ -326,10 +333,11 @@ class detect:
         
         #templateContour = self.templates['hollow_cube'][0] # test image
         
-        ## TEMPLATE MATCHING  almsot working ######
+        ## TEMPLATE MATCHING  almost working ######
         shapeMask=self.raw_image
         threshold = 0.82
         rectangle_color=self.strToBGR(color)
+        print(rectangle_color)
         # go through all possible shape templates (except some)
         for shape in self.templates: 
             # exclude some possiblities depending on color   
@@ -339,6 +347,7 @@ class detect:
                     res = cv2.matchTemplate(image, model, cv2.TM_CCOEFF_NORMED)
                     loc = np.where( res >= threshold)
                     match=False
+                    
                     for pt in zip(*loc[::-1]):
                         cv2.rectangle(shapeMask, pt, (pt[0] + w, pt[1] + h), rectangle_color, 2) # match rectangle
                         print("It's a "+ color + " " +  shape)
@@ -353,7 +362,7 @@ class detect:
                         stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         print(stamp)
 
-                        objectCoord = open(object_id + ".txt", "w")
+                        objectCoord = open(PATH+ "/mapFiles" + object_id + ".txt", "w")
 
                         # only need x, y coordinates - need to get rid of z #
 
