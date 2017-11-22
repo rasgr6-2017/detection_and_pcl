@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from std_msgs.msg import String
 from std_msgs.msg import Time
+from std_msgs.msg import UInt8
 from std_msgs.msg import Int32MultiArray
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
@@ -60,7 +61,7 @@ class detect:
         self.espeakPub = rospy.Publisher('/espeak/string', String, queue_size = 10)
         self.eviPubStr = rospy.Publisher('/ras_msgs/RAS_Evidence', String, queue_size = 10)
         self.eviPubIm = rospy.Publisher('/ras_msgs/RAS_Evidence', Image, queue_size = 10)
-        self.eviPubInt = rospy.Publisher('/ras_msgs/RAS_Evidence', uint8, queue_size = 10)
+        self.eviPubInt = rospy.Publisher('/ras_msgs/RAS_Evidence', UInt8, queue_size = 10)
         self.eviPubTime = rospy.Publisher('/ras_msgs/RAS_Evidence', Time, queue_size = 10)
 
         self.bridge = CvBridge()
@@ -114,7 +115,31 @@ class detect:
         
         self.detector = cv2.SimpleBlobDetector(params)
         
-
+        ### QR reader ###
+        
+        self.temp = cv2.imread(PATH+'/objects/obstacle/QR.png', 0)
+        grey = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)  
+        edges = cv2.Canny(grey, 120, 120)
+         
+        template = np.resize(self.temp, (70,70,3))
+        template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        template = cv2.Canny(template, 120, 120)
+        
+        result = cv2.matchTemplate(edges, template, cv2.TM_CCOEFF)
+        (_, maxValue, minLoc, maxLoc) = cv2.minMaxLoc(result)
+        topLeft = maxLoc
+        print(maxValue)
+        botRight = (topLeft[0] + int(70*1), topLeft[1] + int(70*1))
+        roi = grey[topLeft[1]:botRight[1], topLeft[0]:botRight[0]]
+        
+        mask = np.zeros(edges.shape, dtype="uint8")
+        grey = cv2.addWeighted(edges, 0.25, mask, 0.75, 0)
+        
+        grey[topLeft[1]:botRight[1], topLeft[0]:botRight[0]] = roi
+        if maxValue > 2500000:
+            print("I see an obstacle")
+            
+        ##################
             
         # check all colours
         self.bound(self.blueBounds,  "blue")
@@ -166,29 +191,6 @@ class detect:
             if SHOW_IMAGE:
                 cv2.imshow("Color Detection", total_im_with_keypoints) # show all keypoints together
                 cv2.waitKey(3)
-
-    ###################### TEST ######################     
-    def QR(self):
-        output = cv2.cvtColor(self.raw_image, cv2.COLOR_BGR2GRAY)        
-        edges = cv2.Canny(grey, 120, 120)
-
-        self.temp = cv2.imread('src/objects/obstacle/QR.png', 0) 
-        template = cv2.Canny(self.temp, 120, 120)
-
-        result = cv2.matchTemplate(edges, template, cv2.TM_CCOEFF)
-        (_, maxValue, minLoc, maxLoc) = cv2.minMaxLoc(result)
-        topLeft = maxLoc
-        botRight = (topLeft[0] + int(tw*1), topLeft[1] + int(th*1))
-        roi = gray[topLeft[1]:botRight[1], topLeft[0]:botRight[0]]
-        
-        mask = np.zeros(edges.shape, dtype="uint8")
-        grey = cv2.addWeighted(edges, 0.25, mask, 0.75, 0)  
-        grey[topLeft[1]:botRight[1], topLeft[0]:botRight[0]] = roi
-    
-        cv2.imshow("Template", self.temp)        
-        cv2.waitKey(3)
-        return            
-    ##################################################
 
     # choose object from list of objects
     def chooseObject(self):
@@ -339,7 +341,7 @@ class detect:
                     match=False
                     for pt in zip(*loc[::-1]):
                         cv2.rectangle(shapeMask, pt, (pt[0] + w, pt[1] + h), rectangle_color, 2) # match rectangle
-                        #print("It's a "+ color + " " +  shape)
+                        print("It's a "+ color + " " +  shape)
                         self.outputs[color].shapeName=shape # save to dictionary
                         match=True
 
@@ -578,5 +580,6 @@ def main(args):
 
 if __name__ == '__main__':
     main(sys.argv)
+
 
 
