@@ -5,18 +5,27 @@ roslib.load_manifest('simple_detection')
 import sys
 import rospy
 import cv2
+import rosbag
 import numpy as np
+from sys import argv
 from std_msgs.msg import String
 from std_msgs.msg import Time
 from std_msgs.msg import UInt8
-from std_msgs.msg import Int32MultiArray
+from std_msgs.msg import Int32MultiArray, Header
 from sensor_msgs.msg import Image
+from geometry_msgs.msg import Point, Transform
+from geometry_msgs.msg import PoseStamped, TransformStamped
+from ras_msgs.msg import RAS_Evidence
 from cv_bridge import CvBridge, CvBridgeError
 import datetime
+import time
+import zbar
+from PIL import Image as pilim
+from matplotlib import pyplot as plt
 import sys, termios, tty, os, time
 PATH=os.path.dirname(os.path.abspath(__file__)) # path of this file
 SHOW_IMAGE=True # for debugging
-
+BATTERY_TIMEOUT=8 # ignore battery if found x seconds earlier
 #### Blob detection of different colours and Canny edge detector ####
 class colourClass:
     keypoint=None
@@ -27,17 +36,21 @@ class colourClass:
     shape=None
     shapeName=None
     index=None
+    detected_last_frame=False
     
 class detect:
 
-    redBounds = [([0,100,150], [13,255,255])]
-    blueBounds = [([80,50,200], [115,150,255])]
-    yellowBounds = [([17, 100, 50], [30, 255, 255])]
-    orangeBounds = [([6, 150, 120], [16, 255, 255])]
-    greenBounds = [([30, 50, 0],  [80, 255, 255])]
-    purpleBounds = [([140, 50, 50], [179, 255, 255])]
+    redBounds = [([0,40,0], [6,255,255])]
+    blueBounds = [([100,100,0], [109,255,210])]
+    yellowBounds = [([15, 100, 80], [29, 255, 180])]
+    orangeBounds = [([5, 150, 50], [12, 255, 255])]
+    greenBounds = [([60,50,0], [90,255,200])]
+    purpleBounds = [([110, 40, 0], [135, 255, 255])]
     hsv=None
     raw_image=None
+    raw_data=None
+    battery_detected_before=False
+    time_since_battery_found=BATTERY_TIMEOUT
     
     # save to this dictonary [output, keypoint]
     redClass=colourClass()
@@ -53,45 +66,60 @@ class detect:
     templates={'cube':[],  'hollow_cube':[],  'sphere':[],  'star':[], 'cylinder':[], 'cross':[],  'triangle':[] }
     
     batteryTemplates=[]
+    xPos=0 # robot pose
+    yPos=0
+    zPos=0
+    orientation=0
     
   # Get camera info-
 
     def __init__(self):
+		# Publishers
         self.image_pub = rospy.Publisher("image_output",Image, queue_size=10)
         self.pixel_pub = rospy.Publisher("pixel_index", Int32MultiArray, queue_size=10)
         self.espeakPub = rospy.Publisher('/espeak/string', String, queue_size = 10)
-        self.eviPubStr = rospy.Publisher('/ras_msgs/RAS_Evidence', String, queue_size = 10)
-        self.eviPubIm = rospy.Publisher('/ras_msgs/RAS_Evidence', Image, queue_size = 10)
-        self.eviPubInt = rospy.Publisher('/ras_msgs/RAS_Evidence', UInt8, queue_size = 10)
-        self.eviPubTime = rospy.Publisher('/ras_msgs/RAS_Evidence', Time, queue_size = 10)
-
+        self.eviPub = rospy.Publisher('/evidence', RAS_Evidence, queue_size = 10)
+		# Subscribers
         self.bridge = CvBridge()
         self.image_sub = rospy.Subscriber("/camera/rgb/image_raw",Image,self.blob)
+        self.coordinates = rospy.Subscriber("target_coord", Point, self.callback)
+        self.barcodeSub = rospy.Subscriber("/barcode", String, self.boobyCallback)
+        self.robotPos = rospy.Subscriber("/localization/pose", PoseStamped, self.robotPosCallback)
+        
         self.countdown = 50;
         self.alter = True;
         self.initTemplateImages() # pre-process template images for shape detection
-       
+        self.x = 0
+        self.y = 0
 
+        
+        self.barcode1 = String()
+		
     def blob(self,data):
         
         self.countdown = self.countdown-1;
         if self.countdown != 9:
         #print(self.countdown)
             if self.countdown == 0:
-                self.countdown = 50
+                self.countdown = 15
             return
             
         try:
-            cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+			cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+			self.data = data
         except CvBridgeError as e:
             print(e)
           
 
         (rows, cols, channels) = cv_image.shape
+        
+        cv_image = cv_image[100: 500, 0: 1000]
         self.hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
         self.raw_image=cv_image
-        #cv2.imshow("hsv", cv_image)
-        #cv2.waitKey(3)
+        #cv2.imshow(self.hsv)
+       # hist = cv2.calcHist([self.hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
+        #plt.imshow(hist,interpolation = 'nearest')
+        #plt.show()
 
             
         params = cv2.SimpleBlobDetector_Params()
@@ -102,24 +130,27 @@ class detect:
         params.filterByCircularity = False
         params.filterByInertia = False
 
-        params.filterByArea = True
-        params.minArea = 900
-        params.maxArea = 40000
+        params.filterByArea = True # 
+        params.minArea = 10 # min size of detection
+        params.maxArea = 70000
+        # Change thresholds
+        params.minThreshold = 1
         
         # save as png image for templates (comment out this)
         #keypress  = self.getch()
         #if (keypress=='t'):
             #print("saving picture...")
             #self.takePicture(cv_image)
-        #cv2.imshow("RAW image", self.raw_image) # show match
-        #cv2.waitKey(3)  
+        cv2.imshow("RAW image", self.raw_image) # show match
+        cv2.waitKey(3)  
         
         self.detector = cv2.SimpleBlobDetector(params)
         
         ### Battery detection ###
         self.checkForBattery()
         # booby trap QR code detection
-        self.checkForBoobyTrap()
+        QRcode = cv2.imread(PATH+'/objects/obstacle/QR.png', 0)
+        self.checkForBoobyTrap(QRcode)
             
         ##################
             
@@ -136,7 +167,6 @@ class detect:
         totalMask=None
         total_im_with_keypoints=None
         totalOutput=None
-        detected = "I found : "
         detectedShapeColor="I see a "
         for col in self.outputs:
             if not (self.outputs[col].keypoint == None): # if color detected
@@ -150,29 +180,27 @@ class detect:
                 else: 
                     total_im_with_keypoints=cv2.bitwise_and(total_im_with_keypoints, self. outputs[col].im_with_keypoints) # add keypoints together
                 
-                if not self.outputs[col].shapeName==None: # could detect shape also
+                if (not self.outputs[col].shapeName==None) and (self.outputs[col].detected_last_frame): # save to dictionary: # could detect shape twice also
                     detectedShapeColor +=col + " " + self.outputs[col].shapeName + ", "
-                detected+= col + " and "
+                    
                 
                 
         if not (totalMask==None): # some color found
-            #print (detected)
             if not (detectedShapeColor=="I see a "):
                 print(detectedShapeColor)
                 pixel_coordinate = self.chooseObject() # choose object and get pixel coordinate
 
                 try: # send pixel to pcl node
                     self.image_pub.publish(self.bridge.cv2_to_imgmsg(self.raw_image, "bgr8"))
-                    hello = self.pixel_pub.publish(pixel_coordinate)                  
+                    self.pixel_pub.publish(pixel_coordinate)                 
                     self.speak(detectedShapeColor) # send string to speaker
-                    print(hello)
 
                 except CvBridgeError as e:
                     print(e)
                 
             if SHOW_IMAGE:
                 cv2.imshow("Color Detection", total_im_with_keypoints) # show all keypoints together
-                cv2.waitKey(3)
+                cv2.waitKey(1)
 
     # choose object from list of objects
     def chooseObject(self):
@@ -182,86 +210,80 @@ class detect:
                 return self.outputs[object].index # pixel coord
        
        
-    def checkForBoobyTrap(self):
-		 ### QR reader  booby trap ###
-        
-        self.temp = cv2.imread(PATH+'/objects/obstacle/QR.png', 0)
-        grey = cv2.cvtColor(self.raw_image, cv2.COLOR_BGR2GRAY)  
-        edges = cv2.Canny(grey, 120, 120)
-         
-        template = np.resize(self.temp, (70,70,3))
-        template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-        template = cv2.Canny(template, 120, 120)
-        
-        result = cv2.matchTemplate(edges, template, cv2.TM_CCOEFF)
-        (_, maxValue, minLoc, maxLoc) = cv2.minMaxLoc(result)
-        topLeft = maxLoc
-        botRight = (topLeft[0] + int(70*1), topLeft[1] + int(70*1))
-        roi = grey[topLeft[1]:botRight[1], topLeft[0]:botRight[0]]
-        mask = np.zeros(edges.shape, dtype="uint8")
-        grey = cv2.addWeighted(edges, 0.25, mask, 0.75, 0)
-        
-        grey[topLeft[1]:botRight[1], topLeft[0]:botRight[0]] = roi
-        if maxValue > 2000000:
-            detected = "I see an obstacle"
-            #pixelCoord = self.chooseObject() # wrong, this is only for shapes...
-            print(detected)
-            #print(pixelCoord)
-            self.speak(detected)
-            txt = open(PATH+"/mapFiles/obstacle.txt", "w")
+    def checkForBoobyTrap(self, image):
 
-            txt.write("obstacle" + '\n')
-            txt.close()
-                
+		## Reader
+		scanner = zbar.ImageScanner()
+		## Configure it
+		scanner.parse_config('enable')
+		
+
+		grey = cv2.cvtColor(self.raw_image, cv2.COLOR_BGR2GRAY)
+		pil = pilim.fromarray(grey)
+		width, height = pil.size
+		raw = pil.tobytes()
+		## Wrap image data
+		zbar_im = zbar.Image(width, height, 'Y800', raw)
+		## Scan image
+		scanner.scan(zbar_im)
+		#print(n)
+		for symbol in zbar_im: # found booby trap
+			print(symbol.type, symbol.data)
+			self.speak("It's a trap!")		
+			 
+		return
+	
+	
+
     def checkForBattery(self):
 		image = cv2.cvtColor(self.raw_image, cv2.COLOR_BGR2GRAY)
-		#laplacian = cv2.Laplacian(image,cv2.CV_32F)
-		#cv2.imshow("Laplacian", laplacian)
-		
-		
-		
+		threshold = 0.77
+		pixCoord = []
+		time1=0
 		for model in self.batteryTemplates: 
-			#model = cv2.Laplacian(model,cv2.CV_32F)
-
 			w, h = model.shape[::-1]
-########################## Trying ORB ###############################			
-			#res = cv2.matchTemplate(image, model, cv2.TM_CCOEFF_NORMED)
-			#(_, maxValue, minLoc, maxLoc) = cv2.minMaxLoc(res)
-			#mask = np.zeros(image.shape, dtype="uint8")
 			
-			#cv2.imshow("Lap", model)
-			#loc = np.where( res >= threshold)
-			match=False
-			orb = cv2.ORB()
-			kp = orb.detect(model, None)
-			kp, des = orb.compute(model, kp)
-			kp1 = orb.detect(image, None)			
-			kp1, des1 = orb.compute(image, kp1)
-			bf = cv2.BFMatcher(cv2.NORM_L1, crossCheck=True)
-			clusters = np.array([des])
-			bf.add(clusters)
-			
-			matches = bf.match(des, des1)
-			
-			
-			#thres = (sum(dist)/len(dist))*0.5
+			res = cv2.matchTemplate(image, model, cv2.TM_CCOEFF_NORMED)
+			(_, maxValue, minLoc, maxLoc) = cv2.minMaxLoc(res)
 
-			image2 = cv2.drawKeypoints(image, kp1, color=(0,255,0), flags = 0)
-			cv2.imshow("Battery Detection", image2)
-			threshold = 1100 # max distance 
-			if len(matches) > 100: # minimum number of matches
-				# Sort them in the order of their distance.
-				matches = sorted(matches, key = lambda x:x.distance)
+			loc = np.where( res >= threshold)
 
-				if matches[10].distance < threshold: # filter bad matches 
-					print("Found battery.")
-					print(kp1[matches[0].queryIdx].pt) # pixel pos
-					return True
 
-			#for pt in zip(*loc[::-1]):
-			#	print("I've found the battery!!")
-			#	match=True
-		return match
+			for pt in zip(*loc[::-1]):
+				
+				### Pixel coordinates of battery ###
+				
+				pixCoord.append(maxLoc)
+				a = np.asarray(pixCoord)
+				time1 = time.time() - self.time_since_battery_found
+			## Make sure it sees the battery at least twice and long time since last battery
+				if self.battery_detected_before and time1>BATTERY_TIMEOUT: #seconds since found
+					self.time_since_battery_found=time.time() # get current time 
+					self.speak("I've found the battery!!") 
+					self.battery_detected_before=False
+					print("battery found")
+					## Pixel coordinates are the top left of the matched image
+					# x coordinate + (width of matched template / 2)
+					xBattery = maxLoc[0] + (w/2)
+					# y coordinates + (height of matched template / 2)
+					yBattery = maxLoc[1] + (h/2)
+					
+					# Write coordinates to .txt file
+					X = self.xPos # + ? some math based on robots orientation and pixel coord 
+					Y = self.yPos
+					batteryCoord = open(PATH+ "/mapFiles/battery.txt", "w")
+					batteryCoord.write(str(X) + ' ' + str(Y)+'/n') # for mapping
+					batteryCoord.close()
+					return
+					
+				else:
+					self.battery_detected_before=True # will detect next frame
+					return
+
+		self.battery_detected_before=False # never detected
+		return
+
+		
 ########################################################################            
     
     # make hsv masks of video stream with upper and lower limits
@@ -285,17 +307,6 @@ class detect:
     
             # uses binary and Otsu's thresholding
             ret, thresholdedIm = cv2.threshold(grey,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-            # using closing (dilation followed by erosion) to fill gaps
-            kernel = np.ones((10,10),np.uint8)
-            
-            output = cv2.erode(thresholdedIm, kernel,iterations = 1)
-            kernel2 = np.ones((10,10),np.uint8)
-            output = cv2.dilate(output, kernel2,iterations = 1)
-            kernel2 = np.ones((20,20),np.uint8)
-            output = cv2.erode(output, kernel2,iterations = 3)
-            output = cv2.bitwise_not(output)
-            #closing = cv2.dilate(output, kernel2, iterations = 1)
-            #closing = cv2.morphologyEx(thresholdedIm, cv2.MORPH_CLOSE, kernel)
 
             index = Int32MultiArray()
             index.data = [-1, -1]           
@@ -304,24 +315,14 @@ class detect:
             keypoints = self.detector.detect(output)
             #save keypoint to dictionay
             self.outputs[col].keypoint=keypoints
-            cv2.imshow('color detection', output)
-            cv2.waitKey(3)
+            #cv2.imshow("color test", grey) # show match
+            #cv2.waitKey(3)
 
-            colour = ""
             if len(keypoints)  >  0:
-                
-                # get shape on binary image
-                edges = cv2.Canny(grey,  50,  150) # get edges, threshold1 and 2
-                contours, hierarchy = cv2.findContours(edges,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
-                cv2.drawContours(edges, contours, -1, (255,0,0), 2)
-#                cv2.imshow('Edge Detection', edges)
-#                cv2.waitKey(3)
-                self.outputs[col].edges = edges # save its shape to dict
-                
                 index.data = [int(keypoints[0].pt[0]), int(keypoints[0].pt[1])]
+                print(col)
                 self.outputs[col].index=index
                 
-                colour = "I see a " + col + " object"
                 circleColour=self.strToBGR(col)
                 # draw circle at keypoint for matched colour
                 im_with_keypoints = cv2.drawKeypoints(output, keypoints, np.array([]), circleColour, cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
@@ -340,6 +341,7 @@ class detect:
                self.outputs[col].shape=None
                self.outputs[col].shapeName=None
                self.outputs[col].index=None
+               self.outputs[col].detected_last_frame=False
         # clear variables
         
         return  
@@ -362,32 +364,23 @@ class detect:
 #### Shape detector ####
     def shapeDetector(self,  image,  color):
         
-        ## TEMPLATE MATCHING  almost working ######
         shapeMask = self.raw_image
         shapeMask1 = cv2.cvtColor(shapeMask, cv2.COLOR_BGR2GRAY)
         threshold = 0.77
         rectangle_color=self.strToBGR(color)
         # go through all possible shape templates (except some)
+        counter=0
         for shape in self.templates: 
             # exclude some possiblities depending on color   
             if self.checkIfShapeExist(shape,  color):
                 for model in self.templates[shape]: # go through all models
-                    #image = cv2.Canny(shapeMask1, 50, 200)
-                    #model = cv2.Canny(model, 50, 200)
-                    #cv2.imshow("image", image)
+
                     w, h = model.shape[::-1]
                     
                     res = cv2.matchTemplate(image, model, cv2.TM_CCOEFF_NORMED)
                     (_, maxValue, minLoc, maxLoc) = cv2.minMaxLoc(res)
                     topLeft = maxLoc
-                    botRight = (topLeft[0] + int(70*1), topLeft[1] + int(70*1))
-                    roi = shapeMask1[topLeft[1]:botRight[1], topLeft[0]:botRight[0]]
-        
-                    mask = np.zeros(image.shape, dtype="uint8")
-                    shapeMask1 = cv2.addWeighted(image, 0.25, mask, 0.75, 0)
-        
-                    shapeMask1[topLeft[1]:botRight[1], topLeft[0]:botRight[0]] = roi
-                    
+
                     loc = np.where( res >= threshold)
                     match=False
                     
@@ -395,53 +388,77 @@ class detect:
                     
                     for pt in zip(*loc[::-1]):
                         cv2.rectangle(shapeMask, pt, (pt[0] + w, pt[1] + h), rectangle_color, 2) # match rectangle
-                        #print("It's a "+ color + " " +  shape)
-                        self.outputs[color].shapeName=shape # save to dictionary
-                        match=True
 
-                        ############################## TEST ##############################
-                        # Make .txt file with object_id and it's coordinates in relation to the robot #
-                        object_id = color+"_"+shape
-                        group_number = 6
-                        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        objectCoord = open(PATH+ "/mapFiles/" + object_id + ".txt", "w")
-
-                        ## only need x, y coordinates - need to get rid of z #
+                        self.outputs[color].shapeName = shape # save to dictionary
+                        self.outputs[color].detected_last_frame = True # save to dictionary
+                        counter += 1 # check how many matches
+                        match = True
                         
+                        if counter > 70: # filter out false big matches
+							self.outputs[color].shapeName = None
+							self.outputs[color].detected_last_frame = False # save to dictionary
+							match=False
+							break
+                        
+                        
+                    if match: 
+						print(counter)
+						cv2.imshow("matched model", model) # show match
+						cv2.waitKey(3)
+                        # Make .txt file with object_id and it's coordinates in relation to the robot #
+						object_id = color+"_"+shape
 
-                        objectCoord.write(stamp + '\n')
-                        objectCoord.write(stamp + '\n')
-                        objectCoord.close()
+						stamp = rospy.get_rostime()
+						## x, y coordinates on MAP
+						X = self.xPos # + ? some math based on robots orientation + fake distance
+						Y = self.yPos # + ? 
+						
+						objectCoord = open(PATH+ "/mapFiles/" + object_id + ".txt", "w")
+						objectCoord.write(object_id + ' ' + str(X) + ' ' + str(Y) +'/n') # position of object on map
+						objectCoord.close()
 
-                        ## publish object_id and group_number to RAS_Evidence.msg #
+						pos=TransformStamped()
+						pos.header = Header()
+						pos.transform=Transform()
+						pos.transform.translation.x=X
+						pos.transform.translation.y=Y
+						pos.header.stamp=stamp
+						## publish object_id and group_number to RAS_Evidence.msg #
+					
+						msg_data=RAS_Evidence()
+						msg_data.stamp=stamp
+						msg_data.group_number = 6
+						msg_data.image_evidence=self.data
+						header = Header()
+						msg_data.image_evidence.header=header
+						msg_data.object_id=object_id
+						msg_data.object_location=pos
+						
 
-                        #self.eviPubStr.publish(object_id)
-                        #self.eviPubInt.publish(group_number)
-                        #self.eviPubTime.publish(stamp)
-                        ## publish shapeMask to RAS_Evidence.msg #
-                        #image_evidence = shapeMask
-                        #self.eviPubIm.publish(image_evidence)
+						self.eviPub.publish(msg_data)
 
-                        #bag = rosbag.Bag(object_id + ".bag", 'w')
 
-                        #try:
-                            #bag.write('evidence', stamp + '\n' + group_number + '\n' + image_evidence + '\n' + object_id + '\n' + image_evidence + '\n' + pixel_coordinate)
+						#bag = rosbag.Bag(object_id + ".bag", 'w')
 
-                        #finally:
-                            #bag.close()
+						#try:
+						#    bag.write('evidence', str(self.x))
 
-                    if SHOW_IMAGE:   
-                        cv2.imshow("Object Recogntion", shapeMask) # show match
-                        cv2.waitKey(3)
+						#finally:
+						#    bag.close()
+
+						if SHOW_IMAGE:   
+							cv2.imshow("Object Recogntion", shapeMask) # show match
+							cv2.waitKey(3)
                         ###################################################################
                     if match:
-                        return shapeMask# done matching
+                        return shapeMask # done matching
+                    else:
+						self.outputs[color].detected_last_frame=False # save to dictionary
                     
         # Grey mask of current image should have bigger area
         # take more model images, more angles
         # hollow_cube vs cylinder is very difficult
-        # Purple hsv bounds need to be sorted
-        # cross is very bad, because of purple mask being too small
+
         
         return None
         
@@ -484,23 +501,20 @@ class detect:
                     img = self.maskColor(filename, img) # mask color to remove background
                     grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) # to binary
                     ret, thresholdedIm = cv2.threshold(grey,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-                    edges = cv2.Canny(grey,  50,  150) # get edges, threshold1 and 2
-                    contours, hierarchy = cv2.findContours(edges,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
-                    cv2.drawContours(edges, contours, -1, (255,0,0), 2)
                     self.templates[shapeType].append(grey) # save shape data to list
-#                    print(shapeType+" - "+filename)
-#                    print(len(contours))
-#                    print(" ")
-#                    cv2.imshow("Shape2", grey)
-#                    cv2.waitKey(3)
-#                    self.getch()
-        
+                    
+                    #cv2.imshow("Shape2", grey)
+                    #cv2.waitKey(3)
+                    #print(shapeType+" - "+filename)
+                    #self.getch()
+        # This is only getting the first image #
         d= PATH+'/objects/battery/' # init battery images
         for f in os.listdir(d):
 			if f.endswith(".png"):
-				img = cv2.imread(d+f, 0) # read image from local disk
+				img = cv2.imread(d+f,0) # read image from local disk
 				self.batteryTemplates.append(img)
         print("Done!")
+        #print(self.batteryTemplates)
         return
         
     def maskColor(self,  file, img):
@@ -531,14 +545,13 @@ class detect:
             output = cv2.cvtColor(output, cv2.COLOR_HSV2BGR)
         return output
 
-        
     # write image to file in local folder
     def takePicture(self,  image):
         print(PATH)
         cv2.imwrite(PATH+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+".png",image)
         return
         
-    def hough(self,  edges,  img): # this works mroe for 2D, maybe for booby trap ?
+    def hough(self,  edges,  img): # this works more for 2D, maybe for booby trap ?
     
         #bgr = cv2.cvtColor(self.hsv, cv2.COLOR_HSV2BGR)
         # convert to grey 
@@ -558,9 +571,12 @@ class detect:
                 if SHOW_IMAGE:
                     cv2.imshow("Shape Detector", img)
                     cv2.waitKey(3)
-      
-
- 
+    
+    def callback(self, msg):
+		#self.x = msg.x
+		#self.y = msg.y		
+		return
+		  		
     # get keyboard press
     def getch(self):
         fd = sys.stdin.fileno()
@@ -572,7 +588,20 @@ class detect:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
                             
-     
+    def boobyCallback(self, data):
+		self.barcode = data
+		return self.barcode
+		
+			
+			
+    def robotPosCallback(self, data):
+		self.xPos = data.pose.x
+		self.yPos = data.pose.y
+		self.zPos = data.pose.z
+		self.orientation = data.rotation
+		#print(self.xPos)
+		return self.xPos, self.yPos, self.zPos	
+		
 
 def main(args):
   rospy.init_node('image_converter', anonymous=True)
